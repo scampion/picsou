@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import datetime
+import hashlib
+import os
+import sys
+import logging
+
+import exifread
+from hachoir.parser import createParser
+from hachoir.metadata import extractMetadata
+
+logging.getLogger("exifread").setLevel(logging.WARNING)
+logging.basicConfig(format='%(levelname)s : %(message)s', level=logging.DEBUG)
+
+exclude_ext = ['tec', 'dup']
+hasher = hashlib.md5()
+
+
+def exif(media):
+    with open(media, 'rb') as f:
+        metadata = exifread.process_file(f, details=False)
+        dt = metadata['Image DateTime']
+        dt = datetime.datetime.strptime(str(dt), '%Y:%m:%d %H:%M:%S')
+        return dt
+
+
+def hachoir(media):
+    parser = createParser(media)
+    metadata = extractMetadata(parser)
+    dt = metadata.exportDictionary()['Metadata']['Creation date']
+    dt = datetime.datetime.strptime(str(dt), '%Y-%m-%d %H:%M:%S')
+    return dt
+
+
+def strpfilename(media):
+    dt = os.path.basename(media).split('.')[0]
+    for f in ['%Y%m%d_%H%M%S', '%Y-%m-%d %H:%M:%S']:
+        try:
+            return datetime.datetime.strptime(str(dt), f)
+        except Exception:
+            continue
+    logging.warning("no date extracted for media %s", media)
+
+
+def parse(func, media):
+    try:
+        dt = func(media)
+        if dt.year < 1980:
+            raise Exception("date before 1980 : %s" % dt)
+        else:
+            return dt.year, dt.month, dt.isocalendar()[1]
+    except Exception as e:
+        logging.error("%s : %s : %s", media, func.__name__, str(e))
+        return None
+
+
+def walk(idir):
+    for root, dirs, files in os.walk(idir):
+        for f in files:
+            if f.split('.')[-1] in exclude_ext:
+                continue
+            yield os.path.join(root, f)
+
+
+def extract_date(idir):
+    for media in walk(idir):
+        dt = parse(exif, media)
+        if not dt:
+            dt = parse(hachoir, media)
+        if not dt:
+            dt = parse(strpfilename, media)
+        logging.debug("%s %s", media, dt)
+        if dt:
+            yield media, dt
+
+
+def md5(media):
+    with open(media, 'rb') as f:
+        hasher.update(f.read())
+    return hasher.hexdigest()
+
+
+def main():
+    idir = sys.argv[1]
+    for f, (year, month, weeknb) in extract_date(idir):
+        year, month, weeknb = map(str, (year, month, weeknb))
+        dst = os.path.join(idir, year, month, weeknb)
+        os.makedirs(dst, exist_ok=True)
+        if md5(f) not in [md5(os.path.join(dst, o)) for o in os.listdir(dst)]:
+            os.rename(f, os.path.join(dst, os.path.basename(f)))
+            logging.info("move %s to %s", f, dst)
+        else:
+            logging.warning("duplicate file  %s to %s", f, dst)
+            os.rename(f, f + ".dup")
+
+
+if __name__ == '__main__':
+    main()
