@@ -69,7 +69,7 @@ def walk(idir):
                 continue
             filepath = os.path.join(root, f)
             if os.stat(filepath).st_size < mim_file_size:
-                os.rename(f, os.path.join(trash, "%s_%s" % (f, md5(filepath))))
+                os.rename(filepath, os.path.join(trash, "%s_%s" % (f, md5(filepath))))
                 continue
             yield filepath
 
