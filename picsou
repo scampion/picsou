@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import datetime
 import hashlib
+import itertools
 import os
+import shutil
 import sys
 import logging
 
@@ -9,11 +11,14 @@ import exifread
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
 
-logging.getLogger("exifread").setLevel(logging.WARNING)
-logging.basicConfig(format='%(levelname)s : %(message)s', level=logging.DEBUG)
+logging.getLogger("hachoir").setLevel(logging.ERROR)
+logging.getLogger("exifread").setLevel(logging.ERROR)
+logfile = "%s.log" % datetime.datetime.now()
+logging.basicConfig(format='%(levelname)s : %(message)s', filename=logfile, level=logging.DEBUG)
+logging.getLogger().addHandler(logging.StreamHandler())
 
 exclude_ext = ['tec', 'dup']
-hasher = hashlib.md5()
+mim_file_size = 1000
 
 
 def exif(media):
@@ -27,9 +32,10 @@ def exif(media):
 def hachoir(media):
     parser = createParser(media)
     metadata = extractMetadata(parser)
-    dt = metadata.exportDictionary()['Metadata']['Creation date']
-    dt = datetime.datetime.strptime(str(dt), '%Y-%m-%d %H:%M:%S')
-    return dt
+    if metadata:
+        dt = metadata.exportDictionary()['Metadata']['Creation date']
+        dt = datetime.datetime.strptime(str(dt), '%Y-%m-%d %H:%M:%S')
+        return dt
 
 
 def strpfilename(media):
@@ -55,11 +61,17 @@ def parse(func, media):
 
 
 def walk(idir):
+    trash = os.path.join(idir, 'trash')
+    os.makedirs(trash, exist_ok=True)
     for root, dirs, files in os.walk(idir):
         for f in files:
             if f.split('.')[-1] in exclude_ext:
                 continue
-            yield os.path.join(root, f)
+            filepath = os.path.join(root, f)
+            if os.stat(filepath).st_size < mim_file_size:
+                os.rename(f, os.path.join(trash, "%s_%s" % (f, md5(filepath))))
+                continue
+            yield filepath
 
 
 def extract_date(idir):
@@ -75,9 +87,20 @@ def extract_date(idir):
 
 
 def md5(media):
+    hasher = hashlib.md5()
     with open(media, 'rb') as f:
         hasher.update(f.read())
     return hasher.hexdigest()
+
+
+def get_output_filepath(of):
+    for i in itertools.count():
+        if not os.path.exists(of):
+            return of
+        else:
+            split = of.split('.')
+            split[-2] += '_%d' % i
+            of = '.'.join(split)
 
 
 def main():
@@ -86,12 +109,14 @@ def main():
         year, month, weeknb = map(str, (year, month, weeknb))
         dst = os.path.join(idir, year, month, weeknb)
         os.makedirs(dst, exist_ok=True)
-        if md5(f) not in [md5(os.path.join(dst, o)) for o in os.listdir(dst)]:
-            os.rename(f, os.path.join(dst, os.path.basename(f)))
-            logging.info("move %s to %s", f, dst)
+        if md5(f) in [md5(os.path.join(dst, o)) for o in os.listdir(dst)]:
+            shutil.move(f, f + ".dup")
+            logging.info("move %s to %s", f, f + ".dup")
+            logging.warning("duplicate file %s in %s", f, dst)
         else:
-            logging.warning("duplicate file  %s to %s", f, dst)
-            os.rename(f, f + ".dup")
+            of = get_output_filepath(os.path.join(dst, os.path.basename(f)))
+            shutil.move(f, of)
+            logging.info("move %s to %s", f, of)
 
 
 if __name__ == '__main__':
