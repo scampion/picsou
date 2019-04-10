@@ -17,8 +17,13 @@ logfile = "%s.log" % datetime.datetime.now()
 logging.basicConfig(format='%(levelname)s : %(message)s', filename=logfile, level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
 
+patterns = ['%Y%m%d_%H%M%S',
+            '%Y-%m-%d %H:%M:%S',
+            'VID_%Y%m%d_%H%M%S',
+            '%Y-%m-%d %H.%M.%S'
+            ]
 exclude_ext = ['tec', 'dup']
-mim_file_size = 1000
+mim_file_size = 64000
 
 
 def exif(media):
@@ -39,9 +44,10 @@ def hachoir(media):
 
 
 def strpfilename(media):
-    dt = os.path.basename(media).split('.')[0]
-    for f in ['%Y%m%d_%H%M%S', '%Y-%m-%d %H:%M:%S']:
+    dt = '.'.join(os.path.basename(media).split('.')[:-1])
+    for f in patterns:
         try:
+            print(dt, f)
             return datetime.datetime.strptime(str(dt), f)
         except Exception:
             continue
@@ -68,11 +74,18 @@ def walk(idir):
             if f.split('.')[-1] in exclude_ext:
                 continue
             filepath = os.path.join(root, f)
-            if os.stat(filepath).st_size < mim_file_size:
+            if os.stat(filepath).st_size < mim_file_size and 'trash' not in filepath:
                 os.rename(filepath, os.path.join(trash, "%s_%s" % (f, md5(filepath))))
                 continue
             yield filepath
 
+def clean(idir):
+    for root, dirs, files in os.walk(idir):
+        for name in dirs:
+            dir = os.path.join(root, name)
+            if not os.listdir(dir):
+                os.rmdir(dir)
+                logging.debug('rmdir %s', dir)
 
 def extract_date(idir):
     for media in walk(idir):
@@ -84,7 +97,6 @@ def extract_date(idir):
         logging.debug("%s %s", media, dt)
         if dt:
             yield media, dt
-
 
 def md5(media):
     hasher = hashlib.md5()
@@ -102,14 +114,15 @@ def get_output_filepath(of):
             split[-2] += '_%d' % i
             of = '.'.join(split)
 
-
 def main():
     idir = sys.argv[1]
     for f, (year, month, weeknb) in extract_date(idir):
         year, month, weeknb = map(str, (year, month, weeknb))
         dst = os.path.join(idir, year, month, weeknb)
         os.makedirs(dst, exist_ok=True)
-        if md5(f) in [md5(os.path.join(dst, o)) for o in os.listdir(dst)]:
+        if os.path.dirname(f) == dst:
+            logging.debug("already in place %s", f)
+        elif md5(f) in [md5(os.path.join(dst, o)) for o in os.listdir(dst)]:
             shutil.move(f, f + ".dup")
             logging.info("move %s to %s", f, f + ".dup")
             logging.warning("duplicate file %s in %s", f, dst)
@@ -117,7 +130,7 @@ def main():
             of = get_output_filepath(os.path.join(dst, os.path.basename(f)))
             shutil.move(f, of)
             logging.info("move %s to %s", f, of)
-
+    clean(idir)
 
 if __name__ == '__main__':
     main()
