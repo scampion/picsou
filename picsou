@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+PICture SOrt Unifier
+This script sort a picture directory, deduplicate pics and clean it.
+For more info, RTFS.
+"""
 import datetime
 import hashlib
 import itertools
